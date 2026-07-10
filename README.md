@@ -18,7 +18,7 @@ CrewAI-based multi-agent system that investigates a company careers site, design
 5. Verification Agent
 6. Evaluation Agent
 
-The implementation uses CrewAI-compatible agent and task definitions, OpenRouter-backed reasoning, Playwright inspection, and a generated standalone scraper template.
+The implementation uses CrewAI-compatible agent and task definitions, OpenAI-backed reasoning, Playwright inspection, and a generated standalone scraper template.
 
 ## Setup
 
@@ -72,4 +72,3 @@ To actually scrape the jobs, you need to run the generated standalone script.
    ```
    
 This will execute the scraper and save the extracted jobs directly into a `jobs.jsonl` file in that folder.
-

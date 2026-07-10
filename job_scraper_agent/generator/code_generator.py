@@ -5,21 +5,19 @@ from pathlib import Path
 from typing import Any
 
 from ..models import GeneratedScraperPlan, SiteProfile
-from ..openrouter import OpenRouterClient
+from ..openai_client import OpenAIClient
 from ..settings import Settings
 from ..trace import TraceRecorder
-from ..utils import slugify_domain, valid_http_url, write_text
+from ..utils import dedupe_preserve_order, slugify_domain, valid_http_url, write_text
 
 
 class CodeGenerator:
     def __init__(self, settings: Settings, trace: TraceRecorder | None = None) -> None:
         self.settings = settings
         self.trace = trace
-        self.client = OpenRouterClient(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            site_url=settings.openrouter_site_url,
-            app_name=settings.openrouter_app_name,
+        self.client = OpenAIClient(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
             trace=trace,
             timeout_seconds=settings.request_timeout_seconds,
         )
@@ -36,7 +34,7 @@ class CodeGenerator:
             company_slug=slugify_domain(site_profile.company_domain),
             target_country_code=self.settings.target_country_code,
             transport=site_profile.transport if site_profile.transport != "unknown" else "playwright",
-            start_urls=[url for url in site_profile.start_urls if valid_http_url(url)]
+            start_urls=dedupe_preserve_order([url for url in site_profile.start_urls if valid_http_url(url)])
             or ([site_profile.career_page] if valid_http_url(site_profile.career_page) else []),
             api_endpoint=site_profile.api_endpoint,
             graphql_endpoint=site_profile.graphql_endpoint,
@@ -80,7 +78,7 @@ class CodeGenerator:
                 payload["company_domain"] = site_profile.company_domain
                 payload["company_slug"] = slugify_domain(site_profile.company_domain)
                 payload.setdefault("target_country_code", self.settings.target_country_code)
-                start_urls = [url for url in payload.get("start_urls", []) if valid_http_url(url)]
+                start_urls = dedupe_preserve_order([url for url in payload.get("start_urls", []) if valid_http_url(url)])
                 if not start_urls:
                     start_urls = plan.start_urls
                 payload["start_urls"] = start_urls

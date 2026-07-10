@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models import VerificationIssue, VerificationReport
-from ..openrouter import OpenRouterClient
+from ..openai_client import OpenAIClient
 from ..settings import Settings
 from ..trace import TraceRecorder
 from ..utils import valid_http_url
@@ -35,11 +35,9 @@ class Verifier:
     def __init__(self, settings: Settings, trace: TraceRecorder | None = None) -> None:
         self.settings = settings
         self.trace = trace
-        self.client = OpenRouterClient(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            site_url=settings.openrouter_site_url,
-            app_name=settings.openrouter_app_name,
+        self.client = OpenAIClient(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
             trace=trace,
             timeout_seconds=settings.request_timeout_seconds,
         )
@@ -277,10 +275,10 @@ class Verifier:
                     messages=[
                         {
                             "role": "system",
-                            "content": (
-                                "Turn verifier failures into a short, concrete patch note for the codegen agent. "
-                                "Return JSON only with a single field named patch_feedback."
-                            ),
+                        "content": (
+                            "Turn verifier failures into a short, concrete patch note for the codegen agent. "
+                            "Return JSON only with a single field named patch_feedback."
+                        ),
                         },
                         {
                             "role": "user",

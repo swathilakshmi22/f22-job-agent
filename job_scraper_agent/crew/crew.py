@@ -14,13 +14,13 @@ from ..generator.code_generator import CodeGenerator
 from ..generator.evaluator import Evaluator
 from ..generator.verifier import Verifier
 from ..models import DiscoveryResult, RunArtifacts, ScraperDesign, SiteProfile
-from ..openrouter import OpenRouterClient
+from ..openai_client import OpenAIClient
 from ..settings import Settings
 from ..trace import TraceRecorder
 from ..tools.exa_search import ExaSearchTool
 from ..tools.playwright_tool import PlaywrightTool
 from ..tools.you_crawler import YouCrawlerTool
-from ..utils import company_domain_error, normalize_domain, slugify_domain, valid_http_url
+from ..utils import company_domain_error, dedupe_preserve_order, normalize_domain, slugify_domain, valid_http_url
 from .agents import (
     build_discovery_agent,
     build_generation_agent,
@@ -60,11 +60,9 @@ class JobScraperCrew:
             trace.subscribe(on_trace_event)
         trace.log("start", "workflow", {"message": f"Workflow: starting for {company_domain}", "company_domain": company_domain})
 
-        openrouter = OpenRouterClient(
-            api_key=self.settings.openrouter_api_key,
-            base_url=self.settings.openrouter_base_url,
-            site_url=self.settings.openrouter_site_url,
-            app_name=self.settings.openrouter_app_name,
+        openai_client = OpenAIClient(
+            api_key=self.settings.openai_api_key,
+            base_url=self.settings.openai_base_url,
             trace=trace,
             timeout_seconds=self.settings.request_timeout_seconds,
         )
@@ -93,8 +91,8 @@ class JobScraperCrew:
             build_verification_task(),
         )
 
-        discovery = self._discover(company_domain, trace, you_tool, exa_tool, openrouter)
-        site_profile = self._investigate(company_domain, discovery, trace, playwright_tool, openrouter)
+        discovery = self._discover(company_domain, trace, you_tool, exa_tool, openai_client)
+        site_profile = self._investigate(company_domain, discovery, trace, playwright_tool, openai_client)
         generator = CodeGenerator(self.settings, trace)
 
         repair_feedback: str | None = None
@@ -217,7 +215,7 @@ class JobScraperCrew:
         trace: TraceRecorder,
         you_tool: YouCrawlerTool,
         exa_tool: ExaSearchTool,
-        openrouter: OpenRouterClient,
+        openai_client: OpenAIClient,
     ) -> DiscoveryResult:
         raw_result = you_tool.discover(company_domain)
         result = DiscoveryResult(
@@ -234,9 +232,12 @@ class JobScraperCrew:
             if urls:
                 result.career_page = urls[0]
                 result.confidence = max(result.confidence, 0.5)
-        if openrouter.available and result.candidate_urls:
+        result.candidate_urls = dedupe_preserve_order(result.candidate_urls)
+        if result.career_page and result.career_page not in result.candidate_urls:
+            result.candidate_urls.insert(0, result.career_page)
+        if openai_client.available and result.candidate_urls:
             try:
-                payload, response = openrouter.chat_json(
+                payload, response = openai_client.chat_json(
                     model=self.settings.discovery_model,
                     messages=[
                         {"role": "system", "content": "Classify the company careers entry points. Return JSON only."},
@@ -291,11 +292,11 @@ class JobScraperCrew:
         discovery: DiscoveryResult,
         trace: TraceRecorder,
         playwright_tool: PlaywrightTool,
-        openrouter: OpenRouterClient,
+        openai_client: OpenAIClient,
     ) -> SiteProfile:
-        candidates = [url for url in [discovery.career_page, *discovery.candidate_urls] if url]
+        candidates = dedupe_preserve_order([url for url in [discovery.career_page, *discovery.candidate_urls] if url])
         observations: list[dict[str, Any]] = []
-        for candidate in candidates[:3]:
+        for candidate in candidates[:5]:
             try:
                 obs = asyncio.run(playwright_tool.inspect(candidate))
                 observations.append(obs.__dict__)
@@ -307,14 +308,14 @@ class JobScraperCrew:
             career_page=discovery.career_page,
             ats_type=discovery.ats_type,
             transport=self._infer_transport(observations),
-            start_urls=[url for url in [discovery.career_page, *discovery.candidate_urls] if url],
-            candidate_urls=discovery.candidate_urls,
+            start_urls=dedupe_preserve_order([url for url in [discovery.career_page, *discovery.candidate_urls] if url]),
+            candidate_urls=dedupe_preserve_order(discovery.candidate_urls),
             raw_observations={"observations": observations},
         )
 
-        if openrouter.available and observations:
+        if openai_client.available and observations:
             try:
-                payload, response = openrouter.chat_json(
+                payload, response = openai_client.chat_json(
                     model=self.settings.investigation_model,
                     messages=[
                         {
@@ -340,7 +341,7 @@ class JobScraperCrew:
                 payload.setdefault("career_page", discovery.career_page)
                 payload.setdefault("ats_type", discovery.ats_type)
                 payload.setdefault("transport", profile.transport)
-                start_urls = [url for url in payload.get("start_urls", []) if valid_http_url(url)]
+                start_urls = dedupe_preserve_order([url for url in payload.get("start_urls", []) if valid_http_url(url)])
                 payload["start_urls"] = start_urls or profile.start_urls
                 profile = SiteProfile.model_validate(payload)
                 trace.log_result(
@@ -363,7 +364,7 @@ class JobScraperCrew:
             )
         return profile
 
-    def _design(self, site_profile: SiteProfile, trace: TraceRecorder, openrouter: OpenRouterClient) -> ScraperDesign:
+    def _design(self, site_profile: SiteProfile, trace: TraceRecorder, openai_client: OpenAIClient) -> ScraperDesign:
         design = ScraperDesign(
             company_domain=site_profile.company_domain,
             transport=site_profile.transport if site_profile.transport != "unknown" else self._infer_transport_from_profile(site_profile),
@@ -380,9 +381,9 @@ class JobScraperCrew:
             notes=site_profile.notes,
         )
 
-        if openrouter.available:
+        if openai_client.available:
             try:
-                payload, response = openrouter.chat_json(
+                payload, response = openai_client.chat_json(
                     model=self.settings.design_model,
                     messages=[
                         {

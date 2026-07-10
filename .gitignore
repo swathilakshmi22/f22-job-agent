@@ -7,5 +7,4 @@ traces/
 .env/
 gradio_demo.py
 .env
-
 logs/simplyhired_20260710_072253/

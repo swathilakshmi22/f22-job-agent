@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 
 from ..trace import TraceRecorder
-from ..utils import valid_http_url
+from ..utils import dedupe_preserve_order, valid_http_url
 
 
 CAREERS_KEYWORDS = ("career", "careers", "jobs", "job", "join-us", "joinus", "work-with-us", "vacancies")
@@ -92,19 +92,25 @@ class YouCrawlerTool:
         with urlopen(request, timeout=self.timeout_seconds) as response:
             raw = json.loads(response.read().decode("utf-8"))
         results = raw.get("results") or raw.get("hits") or []
-        urls = [item.get("url") for item in results if valid_http_url(item.get("url"))]
+        urls = dedupe_preserve_order([item.get("url") for item in results if valid_http_url(item.get("url"))])
         career_page = self._pick_career_page(urls)
-        return YouCrawlerResult(career_page=career_page, candidate_urls=urls[:10], confidence=0.8 if career_page else 0.4, raw=raw)
+        return YouCrawlerResult(
+            career_page=career_page,
+            candidate_urls=urls[:25],
+            confidence=0.8 if career_page else 0.4,
+            raw=raw,
+        )
 
     def _discover_locally(self, company_domain: str) -> YouCrawlerResult:
         roots = [f"https://{company_domain}", f"https://www.{company_domain}"]
         candidates: list[str] = []
         for root in roots:
             candidates.extend(self._extract_candidate_urls(root))
+        candidates = dedupe_preserve_order(candidates)
         career_page = self._pick_career_page(candidates)
         confidence = 0.7 if career_page else (0.3 if candidates else 0.0)
         ats_type = self._classify_ats(career_page or "")
-        return YouCrawlerResult(career_page=career_page, candidate_urls=candidates[:20], confidence=confidence, ats_type=ats_type)
+        return YouCrawlerResult(career_page=career_page, candidate_urls=candidates[:50], confidence=confidence, ats_type=ats_type)
 
     def _extract_candidate_urls(self, root_url: str) -> list[str]:
         try:
@@ -131,7 +137,7 @@ class YouCrawlerTool:
             if candidate not in seen:
                 seen.add(candidate)
                 urls.append(candidate)
-        return urls
+        return dedupe_preserve_order(urls)
 
     def _pick_career_page(self, urls: list[str]) -> str | None:
         if not urls:

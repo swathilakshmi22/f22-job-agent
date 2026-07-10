@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models import EvaluationReport
-from ..openrouter import OpenRouterClient
+from ..openai_client import OpenAIClient
 from ..settings import Settings
 from ..trace import TraceRecorder
 
@@ -13,11 +13,9 @@ class Evaluator:
     def __init__(self, settings: Settings, trace: TraceRecorder | None = None) -> None:
         self.settings = settings
         self.trace = trace
-        self.client = OpenRouterClient(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            site_url=settings.openrouter_site_url,
-            app_name=settings.openrouter_app_name,
+        self.client = OpenAIClient(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
             trace=trace,
             timeout_seconds=settings.request_timeout_seconds,
         )
@@ -74,7 +72,7 @@ class Evaluator:
             return report
         except Exception as exc:
             fallback = self._evaluate_locally(script_path, design_json, verification_report, feedback)
-            fallback.reasoning = f"OpenRouter evaluation failed, so local checks were used: {exc}"
+            fallback.reasoning = f"OpenAI evaluation failed, so local checks were used: {exc}"
             return fallback
 
     def _evaluate_locally(
